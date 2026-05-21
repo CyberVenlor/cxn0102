@@ -31,13 +31,13 @@ impl CXN0102 {
         )
     }
 
-    fn write(&self, data: &[u8]) -> io::Result<()> {
+    pub fn write(&self, data: &[u8]) -> io::Result<()> {
         let mut bus = I2cBus::open(self.i2c_path)?;
         bus.write(self.i2c_address, data)
     }
 
     #[allow(dead_code)]
-    fn read(&self, data: &mut [u8]) -> io::Result<()> {
+    pub fn read(&self, data: &mut [u8]) -> io::Result<()> {
         let mut bus = I2cBus::open(self.i2c_path)?;
         bus.read(self.i2c_address, data)
     }
