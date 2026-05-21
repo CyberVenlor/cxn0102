@@ -1,5 +1,6 @@
 use std::io;
 
+use crate::commands::{Request, ShutdownOption, ShutdownReboot};
 use crate::i2c::I2cBus;
 
 pub struct CXN0102 {
@@ -22,7 +23,12 @@ impl Default for CXN0102 {
 
 impl CXN0102 {
     pub fn shutdown(&self) -> io::Result<()> {
-        self.write(&[0x0b, 0x01, 0x00])
+        self.write(
+            &ShutdownReboot {
+                option: ShutdownOption::StopsAllFunctions,
+            }
+            .to_bytes(),
+        )
     }
 
     fn write(&self, data: &[u8]) -> io::Result<()> {

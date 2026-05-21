@@ -1,6 +1,7 @@
 pub mod cxn0102;
 pub mod gpio;
 pub mod i2c;
+pub mod commands;
 
 use std::io;
 
