@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CXN0102 Control</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-strong: #20252d;
+      --text: #17202a;
+      --muted: #6b7280;
+      --line: #d8dee7;
+      --accent: #0d766e;
+      --accent-dark: #095e58;
+      --danger: #b42318;
+      --ok: #16784b;
+      --shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      background: var(--panel-strong);
+      color: white;
+      border-bottom: 1px solid #111827;
+    }
+
+    .topbar {
+      width: min(1180px, calc(100vw - 32px));
+      min-height: 72px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 680;
+    }
+
+    .telemetry {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+      min-width: min(520px, 54vw);
+    }
+
+    .metric {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-height: 54px;
+    }
+
+    .metric-label {
+      color: #b8c2cc;
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 28px auto;
+      display: grid;
+      grid-template-columns: minmax(280px, 420px) 1fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    section,
+    aside {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .status {
+      min-width: 86px;
+      text-align: right;
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .form {
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+
+    label {
+      display: grid;
+      gap: 7px;
+      color: #384250;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      color: var(--text);
+      background: white;
+      padding: 10px 11px;
+      min-height: 42px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(13, 118, 110, 0.14);
+    }
+
+    .params {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field-wide {
+      grid-column: 1 / -1;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    button {
+      border: 0;
+      border-radius: 7px;
+      min-height: 42px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.68;
+    }
+
+    .output {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .log {
+      margin: 0;
+      min-height: 360px;
+      max-height: calc(100vh - 250px);
+      overflow: auto;
+      border-radius: 7px;
+      background: #111827;
+      color: #d1fae5;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    @media (max-width: 860px) {
+      .topbar,
+      main {
+        width: min(100vw - 20px, 680px);
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+        padding: 14px 0;
+      }
+
+      .telemetry,
+      main,
+      .params {
+        grid-template-columns: 1fr;
+      }
+
+      .telemetry {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="topbar">
+        <h1>CXN0102 Control</h1>
+        <div class="telemetry" aria-live="polite">
+          <div class="metric">
+            <div class="metric-label">Temperature</div>
+            <div class="metric-value" id="temperature">Connecting</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Version</div>
+            <div class="metric-value" id="version">Connecting</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <div class="panel-head">
+          <h2>Command</h2>
+          <div class="status" id="sendStatus">Idle</div>
+        </div>
+        <form class="form" id="commandForm">
+          <label>
+            Command
+            <select id="commandSelect"></select>
+          </label>
+          <div class="params" id="params"></div>
+          <label class="field-wide">
+            Request
+            <textarea id="requestPreview" readonly></textarea>
+          </label>
+          <div class="actions">
+            <button type="submit" id="sendButton">Send</button>
+          </div>
+        </form>
+      </section>
+
+      <aside>
+        <div class="panel-head">
+          <h2>Response</h2>
+          <div class="status" id="health">Checking</div>
+        </div>
+        <div class="output">
+          <pre class="log" id="log"></pre>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const commands = [
+      { name: "start-input", label: "Start input", params: [] },
+      { name: "stop-input", label: "Stop input", params: [] },
+      { name: "stop-input-specially", label: "Stop input specially", params: [
+        { name: "output", type: "select", options: ["opening-picture", "mute-black-picture", "mute-opening-picture", "final-picture"] }
+      ] },
+      { name: "mute-unmute-change-output", label: "Mute / unmute change output", params: [
+        { name: "output", type: "select", options: ["unmute", "mute-black-picture", "mute-opening-picture", "final-picture"] }
+      ] },
+      { name: "save-user-param", label: "Save user parameters", params: [
+        { name: "video-position", type: "select", options: ["dont-save", "all", "flip-only"] },
+        { name: "optical-alignment-biphase", type: "select", options: ["dont-save", "all", "optical-alignment-only", "biphase-only"] },
+        { name: "picture-quality", type: "select", options: ["dont-save", "save"] }
+      ] },
+      { name: "initialize-user-param", label: "Initialize user parameters", params: [] },
+      { name: "shutdown-reboot", label: "Shutdown / reboot", params: [
+        { name: "option", type: "select", options: ["stops-all-functions", "reboot"] }
+      ] },
+      { name: "get-video-output-position", label: "Get video output position", params: [] },
+      { name: "set-video-output-position", label: "Set video output position", params: [
+        { name: "pan", type: "number", min: -128, max: 127, value: 0 },
+        { name: "tilt", type: "number", min: -128, max: 127, value: 0 },
+        { name: "flip", type: "select", options: ["off", "right-left", "up-down", "up-down-and-right-left"] }
+      ] },
+      { name: "get-optical-alignment", label: "Get optical alignment", params: [] },
+      { name: "set-optical-alignment", label: "Set optical alignment", params: [
+        { name: "r0-horizontal", type: "number", min: -128, max: 127, value: 0 },
+        { name: "r1-horizontal", type: "number", min: -128, max: 127, value: 0 },
+        { name: "g0-horizontal", type: "number", min: -128, max: 127, value: 0 },
+        { name: "g1-horizontal", type: "number", min: -128, max: 127, value: 0 },
+        { name: "b-horizontal", type: "number", min: -128, max: 127, value: 0 },
+        { name: "r0-vertical", type: "number", min: 0, max: 255, value: 0 },
+        { name: "r1-vertical", type: "number", min: 0, max: 255, value: 0 },
+        { name: "g0-vertical", type: "number", min: 0, max: 255, value: 0 },
+        { name: "g1-vertical", type: "number", min: 0, max: 255, value: 0 },
+        { name: "b-vertical", type: "number", min: 0, max: 255, value: 0 }
+      ] },
+      { name: "get-biphase", label: "Get biphase", params: [] },
+      { name: "set-biphase", label: "Set biphase", params: [
+        { name: "amount", type: "number", min: 0, max: 4294967295, value: 0 }
+      ] },
+      { name: "set-easy-optical-adjustment-control", label: "Easy optical adjustment control", params: [] },
+      { name: "set-easy-optical-adjustment-plus", label: "Easy optical adjustment plus", params: [] },
+      { name: "set-easy-optical-adjustment-minus", label: "Easy optical adjustment minus", params: [] },
+      { name: "set-easy-optical-adjustment-exit", label: "Easy optical adjustment exit", params: [
+        { name: "save", type: "select", options: ["dont-save", "save"] }
+      ] },
+      { name: "set-easy-biphase-adjustment-control", label: "Easy biphase adjustment control", params: [] },
+      { name: "set-easy-biphase-adjustment-plus", label: "Easy biphase adjustment plus", params: [] },
+      { name: "set-easy-biphase-adjustment-minus", label: "Easy biphase adjustment minus", params: [] },
+      { name: "set-easy-biphase-adjustment-exit", label: "Easy biphase adjustment exit", params: [
+        { name: "save", type: "select", options: ["dont-save", "save"] }
+      ] },
+      { name: "get-all-picture-quality", label: "Get all picture quality", params: [] },
+      { name: "set-all-picture-quality", label: "Set all picture quality", params: [
+        { name: "contrast", type: "number", min: -128, max: 127, value: 0 },
+        { name: "brightness", type: "number", min: -128, max: 127, value: 0 },
+        { name: "hue-u", type: "number", min: -128, max: 127, value: 0 },
+        { name: "hue-v", type: "number", min: -128, max: 127, value: 0 },
+        { name: "saturation-u", type: "number", min: -128, max: 127, value: 0 },
+        { name: "saturation-v", type: "number", min: -128, max: 127, value: 0 },
+        { name: "sharpness", type: "number", min: 0, max: 255, value: 0 }
+      ] },
+      { name: "get-brightness", label: "Get brightness", params: [] },
+      { name: "set-brightness", label: "Set brightness", params: [
+        { name: "brightness", type: "number", min: -128, max: 127, value: 0 }
+      ] },
+      { name: "get-contrast", label: "Get contrast", params: [] },
+      { name: "set-contrast", label: "Set contrast", params: [
+        { name: "contrast", type: "number", min: -128, max: 127, value: 0 }
+      ] },
+      { name: "get-hue", label: "Get hue", params: [] },
+      { name: "set-hue", label: "Set hue", params: [
+        { name: "hue-u", type: "number", min: -128, max: 127, value: 0 },
+        { name: "hue-v", type: "number", min: -128, max: 127, value: 0 }
+      ] },
+      { name: "get-saturation", label: "Get saturation", params: [] },
+      { name: "set-saturation", label: "Set saturation", params: [
+        { name: "saturation-u", type: "number", min: -128, max: 127, value: 0 },
+        { name: "saturation-v", type: "number", min: -128, max: 127, value: 0 }
+      ] },
+      { name: "get-sharpness", label: "Get sharpness", params: [] },
+      { name: "set-sharpness", label: "Set sharpness", params: [
+        { name: "sharpness", type: "number", min: 0, max: 255, value: 0 }
+      ] },
+      { name: "get-temperature", label: "Get temperature", params: [] },
+      { name: "get-time", label: "Get time", params: [] },
+      { name: "get-version", label: "Get version", params: [] },
+      { name: "output-test-picture", label: "Output test picture", params: [
+        { name: "pattern", type: "select", options: ["stop", "color-bar", "cross-hatching", "raster", "ramp", "circle", "cross", "circle-and-cross", "filled-circle", "filled-square", "checkerboard", "resolution-checker-vertical-lines", "resolution-checker-horizontal-lines", "resolution-checker-square", "color-bar-ramp-special", "rectangular-hatch-even", "rectangular-hatch-equal-cross-hatch-interval"] },
+        { name: "setting", type: "number", min: 0, max: 255, value: 0 },
+        { name: "background-color", type: "text", value: "00,00,00" },
+        { name: "foreground-color", type: "text", value: "ff,ff,ff" }
+      ] },
+      { name: "get-lot-number", label: "Get lot number", params: [] },
+      { name: "get-serial-number", label: "Get serial number", params: [] },
+      { name: "raw", label: "Raw bytes", params: [
+        { name: "bytes", type: "text", value: "01,00", wide: true }
+      ] }
+    ];
+
+    const commandSelect = document.getElementById("commandSelect");
+    const paramsEl = document.getElementById("params");
+    const previewEl = document.getElementById("requestPreview");
+    const form = document.getElementById("commandForm");
+    const sendButton = document.getElementById("sendButton");
+    const sendStatus = document.getElementById("sendStatus");
+    const logEl = document.getElementById("log");
+    const healthEl = document.getElementById("health");
+    const temperatureEl = document.getElementById("temperature");
+    const versionEl = document.getElementById("version");
+
+    for (const command of commands) {
+      const option = document.createElement("option");
+      option.value = command.name;
+      option.textContent = command.label;
+      commandSelect.appendChild(option);
+    }
+
+    commandSelect.value = "set-brightness";
+    commandSelect.addEventListener("change", renderParams);
+    form.addEventListener("input", updatePreview);
+    form.addEventListener("submit", sendCommand);
+
+    renderParams();
+    refreshHealth();
+    refreshVersion();
+    refreshTemperature();
+    setInterval(refreshTemperature, 2000);
+    setInterval(refreshHealth, 5000);
+    setInterval(refreshVersion, 60000);
+
+    function currentCommand() {
+      return commands.find((command) => command.name === commandSelect.value);
+    }
+
+    function renderParams() {
+      paramsEl.innerHTML = "";
+      const command = currentCommand();
+      for (const param of command.params) {
+        const label = document.createElement("label");
+        if (param.wide || param.type === "text") {
+          label.classList.add("field-wide");
+        }
+        label.textContent = prettyName(param.name);
+
+        let input;
+        if (param.type === "select") {
+          input = document.createElement("select");
+          for (const value of param.options) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = prettyName(value);
+            input.appendChild(option);
+          }
+        } else {
+          input = document.createElement("input");
+          input.type = param.type || "text";
+          if (param.min !== undefined) input.min = param.min;
+          if (param.max !== undefined) input.max = param.max;
+          input.value = param.value ?? "";
+        }
+
+        input.name = param.name;
+        input.required = true;
+        label.appendChild(input);
+        paramsEl.appendChild(label);
+      }
+      updatePreview();
+    }
+
+    function collectRequest() {
+      const command = currentCommand();
+      const args = {};
+      for (const param of command.params) {
+        const input = paramsEl.querySelector(`[name="${param.name}"]`);
+        args[param.name] = input.type === "number" ? Number(input.value) : input.value;
+      }
+      return { command: command.name, args };
+    }
+
+    function updatePreview() {
+      previewEl.value = JSON.stringify(collectRequest(), null, 2);
+    }
+
+    async function sendCommand(event) {
+      event.preventDefault();
+      sendButton.disabled = true;
+      sendStatus.textContent = "Sending";
+      const payload = collectRequest();
+
+      try {
+        const response = await fetch("/api/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        appendLog(data, response.ok);
+        sendStatus.textContent = response.ok ? "Sent" : "Failed";
+        sendStatus.className = response.ok ? "status ok" : "status error";
+        refreshTemperature();
+        refreshVersion();
+      } catch (error) {
+        appendLog({ ok: false, error: error.message }, false);
+        sendStatus.textContent = "Failed";
+        sendStatus.className = "status error";
+      } finally {
+        sendButton.disabled = false;
+      }
+    }
+
+    async function refreshHealth() {
+      try {
+        const response = await fetch("/health");
+        healthEl.textContent = response.ok ? "Online" : "Error";
+        healthEl.className = response.ok ? "status ok" : "status error";
+      } catch {
+        healthEl.textContent = "Offline";
+        healthEl.className = "status error";
+      }
+    }
+
+    async function refreshTemperature() {
+      try {
+        const response = await fetch("/api/temperature");
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "temperature read failed");
+        temperatureEl.textContent = `${data.module_temperature} C  mute ${data.mute_threshold_temperature} C  stop ${data.system_stop_threshold_temperature} C`;
+      } catch (error) {
+        temperatureEl.textContent = error.message;
+      }
+    }
+
+    async function refreshVersion() {
+      try {
+        const response = await fetch("/api/version");
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "version read failed");
+        versionEl.textContent = `FW ${data.firmware}  Param ${data.parameter}  Data ${data.data}`;
+      } catch (error) {
+        versionEl.textContent = error.message;
+      }
+    }
+
+    function appendLog(data, ok) {
+      const time = new Date().toLocaleTimeString();
+      const line = `[${time}] ${ok ? "OK" : "ERROR"}\n${JSON.stringify(data, null, 2)}\n\n`;
+      logEl.textContent = line + logEl.textContent;
+    }
+
+    function prettyName(value) {
+      return value
+        .split("-")
+        .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
+        .join(" ");
+    }
+  </script>
+</body>
+</html>

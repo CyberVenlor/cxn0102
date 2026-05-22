@@ -1,20 +1,26 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::cli::parse_request_line;
+use crate::commands::CXN0102Notify;
 use crate::cxn0102::CXN0102;
 
 const MAX_BODY_SIZE: usize = 1024 * 1024;
+const INDEX_HTML: &str = include_str!("../static/index.html");
+
+type SharedDevice = Arc<Mutex<CXN0102>>;
 
 pub fn run(cxn0102: CXN0102, listen_addr: &str) -> io::Result<()> {
     let listener = TcpListener::bind(listen_addr)?;
+    let cxn0102 = Arc::new(Mutex::new(cxn0102));
     println!("backend listening on http://{listen_addr}");
 
     for stream in listener.incoming() {
         let stream = stream?;
-        let cxn0102 = cxn0102;
+        let cxn0102 = Arc::clone(&cxn0102);
         thread::spawn(move || {
             if let Err(error) = handle_connection(stream, cxn0102) {
                 eprintln!("backend connection error: {error}");
@@ -25,7 +31,7 @@ pub fn run(cxn0102: CXN0102, listen_addr: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream, cxn0102: CXN0102) -> io::Result<()> {
+fn handle_connection(mut stream: TcpStream, cxn0102: SharedDevice) -> io::Result<()> {
     let request = match HttpRequest::read(&mut stream) {
         Ok(request) => request,
         Err(error) if error.kind() == io::ErrorKind::InvalidData => {
@@ -35,12 +41,20 @@ fn handle_connection(mut stream: TcpStream, cxn0102: CXN0102) -> io::Result<()> 
     };
 
     let response = route_request(request, cxn0102);
-    write_response(&mut stream, response.status, response.body)
+    write_response_with_type(
+        &mut stream,
+        response.status,
+        response.content_type,
+        response.body,
+    )
 }
 
-fn route_request(request: HttpRequest, cxn0102: CXN0102) -> HttpResponse {
+fn route_request(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse {
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/") => HttpResponse::html(200, INDEX_HTML.to_owned()),
         ("GET", "/health") => HttpResponse::json(200, r#"{"status":"ok"}"#.to_owned()),
+        ("GET", "/api/temperature") => read_temperature(cxn0102),
+        ("GET", "/api/version") => read_version(cxn0102),
         ("POST", "/command") | ("POST", "/api/command") => process_command(request, cxn0102),
         ("GET", "/command") | ("GET", "/api/command") => {
             HttpResponse::json(405, json_error("use POST for command requests"))
@@ -49,7 +63,7 @@ fn route_request(request: HttpRequest, cxn0102: CXN0102) -> HttpResponse {
     }
 }
 
-fn process_command(request: HttpRequest, cxn0102: CXN0102) -> HttpResponse {
+fn process_command(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse {
     let body = String::from_utf8(request.body)
         .map_err(|error| format!("request body must be UTF-8: {error}"))
         .and_then(|body| command_line_from_body(&body));
@@ -67,6 +81,11 @@ fn process_command(request: HttpRequest, cxn0102: CXN0102) -> HttpResponse {
         Err(error) => return HttpResponse::json(400, json_error(&error)),
     };
 
+    let cxn0102 = match cxn0102.lock() {
+        Ok(cxn0102) => cxn0102,
+        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+    };
+
     if let Err(error) = cxn0102.write(&bytes) {
         return HttpResponse::json(500, json_error(&error.to_string()));
     }
@@ -79,6 +98,67 @@ fn process_command(request: HttpRequest, cxn0102: CXN0102) -> HttpResponse {
             format_hex(&bytes)
         ),
     )
+}
+
+fn read_temperature(cxn0102: SharedDevice) -> HttpResponse {
+    let cxn0102 = match cxn0102.lock() {
+        Ok(cxn0102) => cxn0102,
+        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+    };
+
+    if let Err(error) = cxn0102.write(&[0xA0, 0x00]) {
+        return HttpResponse::json(500, json_error(&error.to_string()));
+    }
+
+    match cxn0102.read_notify() {
+        Ok(CXN0102Notify::GetTemperature(notify)) => HttpResponse::json(
+            200,
+            format!(
+                r#"{{"ok":true,"result":"{:?}","module_temperature":{},"mute_threshold_temperature":{},"system_stop_threshold_temperature":{}}}"#,
+                notify.result,
+                notify.module_temperature,
+                notify.mute_threshold_temperature,
+                notify.system_stop_threshold_temperature
+            ),
+        ),
+        Ok(notify) => HttpResponse::json(
+            500,
+            json_error(&format!("expected temperature notify, received {notify:?}")),
+        ),
+        Err(error) => HttpResponse::json(500, json_error(&error.to_string())),
+    }
+}
+
+fn read_version(cxn0102: SharedDevice) -> HttpResponse {
+    let cxn0102 = match cxn0102.lock() {
+        Ok(cxn0102) => cxn0102,
+        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+    };
+
+    if let Err(error) = cxn0102.write(&[0xA2, 0x00]) {
+        return HttpResponse::json(500, json_error(&error.to_string()));
+    }
+
+    match cxn0102.read_notify() {
+        Ok(CXN0102Notify::GetVersion(notify)) => HttpResponse::json(
+            200,
+            format!(
+                r#"{{"ok":true,"result":"{:?}","firmware":"{}","parameter":"{}","data":"{}","firmware_bytes":[{}],"parameter_bytes":[{}],"data_bytes":[{}]}}"#,
+                notify.result,
+                format_version(notify.firmware),
+                format_version(notify.parameter),
+                format_version(notify.data),
+                format_byte_array(notify.firmware),
+                format_byte_array(notify.parameter),
+                format_byte_array(notify.data)
+            ),
+        ),
+        Ok(notify) => HttpResponse::json(
+            500,
+            json_error(&format!("expected version notify, received {notify:?}")),
+        ),
+        Err(error) => HttpResponse::json(500, json_error(&error.to_string())),
+    }
 }
 
 fn command_line_from_body(body: &str) -> Result<String, String> {
@@ -203,15 +283,37 @@ fn invalid_request(message: &str) -> io::Error {
 struct HttpResponse {
     status: u16,
     body: String,
+    content_type: &'static str,
 }
 
 impl HttpResponse {
     fn json(status: u16, body: String) -> Self {
-        Self { status, body }
+        Self {
+            status,
+            body,
+            content_type: "application/json",
+        }
+    }
+
+    fn html(status: u16, body: String) -> Self {
+        Self {
+            status,
+            body,
+            content_type: "text/html; charset=utf-8",
+        }
     }
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, body: String) -> io::Result<()> {
+    write_response_with_type(stream, status, "application/json", body)
+}
+
+fn write_response_with_type(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &'static str,
+    body: String,
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -224,13 +326,29 @@ fn write_response(stream: &mut TcpStream, status: u16, body: String) -> io::Resu
     write!(
         stream,
         "HTTP/1.1 {status} {reason}\r\n\
-         Content-Type: application/json\r\n\
+         Content-Type: {content_type}\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\
          \r\n\
          {body}",
         body.len()
     )
+}
+
+fn format_version(bytes: [u8; 4]) -> String {
+    bytes
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn format_byte_array(bytes: [u8; 4]) -> String {
+    bytes
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn json_error(message: &str) -> String {
