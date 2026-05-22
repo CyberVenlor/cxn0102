@@ -19,7 +19,7 @@ impl Default for CXN0102 {
             i2c_address: 0x77,
             i2c_path: "/dev/i2c-7",
             gpio_chip_path: "/dev/gpiochip0",
-            gpio_line_offset: 9,
+            gpio_line_offset: 144,
         }
     }
 }
