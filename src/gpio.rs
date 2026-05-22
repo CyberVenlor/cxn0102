@@ -9,8 +9,7 @@ const GPIO_V2_LINES_MAX: usize = 64;
 const GPIO_V2_LINE_NUM_ATTRS_MAX: usize = 10;
 
 const GPIO_V2_LINE_FLAG_INPUT: u64 = 1 << 2;
-const GPIO_V2_LINE_FLAG_OUTPUT: u64 = 1 << 3;
-const GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES: u32 = 2;
+const GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN: u64 = 1 << 9;
 
 const IOC_NRBITS: u64 = 8;
 const IOC_TYPEBITS: u64 = 8;
@@ -39,8 +38,6 @@ const GPIO_IOCTL_TYPE: u64 = 0xb4;
 const GPIO_V2_GET_LINE_IOCTL: libc::c_ulong = iowr::<GpioV2LineRequest>(GPIO_IOCTL_TYPE, 0x07);
 const GPIO_V2_LINE_GET_VALUES_IOCTL: libc::c_ulong =
     iowr::<GpioV2LineValues>(GPIO_IOCTL_TYPE, 0x0e);
-const GPIO_V2_LINE_SET_VALUES_IOCTL: libc::c_ulong =
-    iowr::<GpioV2LineValues>(GPIO_IOCTL_TYPE, 0x0f);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -97,35 +94,11 @@ pub struct GpioController {
 }
 
 impl GpioController {
-    pub const GPIO09_CHIP_PATH: &'static str = "/dev/gpiochip0";
-    pub const GPIO09_LINE_OFFSET: u32 = 9;
-
-    pub fn open_gpio09_input() -> io::Result<Self> {
-        Self::open_input(Self::GPIO09_CHIP_PATH, Self::GPIO09_LINE_OFFSET)
-    }
-
-    pub fn open_gpio09_output(initial_high: bool) -> io::Result<Self> {
-        Self::open_output(
-            Self::GPIO09_CHIP_PATH,
-            Self::GPIO09_LINE_OFFSET,
-            initial_high,
-        )
-    }
-
-    pub fn open_input(chip_path: impl AsRef<Path>, line_offset: u32) -> io::Result<Self> {
-        Self::request_line(chip_path, line_offset, GPIO_V2_LINE_FLAG_INPUT, None)
-    }
-
-    pub fn open_output(
-        chip_path: impl AsRef<Path>,
-        line_offset: u32,
-        initial_high: bool,
-    ) -> io::Result<Self> {
+    pub fn open_input_pull_down(chip_path: impl AsRef<Path>, line_offset: u32) -> io::Result<Self> {
         Self::request_line(
             chip_path,
             line_offset,
-            GPIO_V2_LINE_FLAG_OUTPUT,
-            Some(initial_high),
+            GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN,
         )
     }
 
@@ -139,24 +112,7 @@ impl GpioController {
         Ok((values.bits & 1) != 0)
     }
 
-    pub fn write(&self, high: bool) -> io::Result<()> {
-        let mut values = GpioV2LineValues {
-            bits: u64::from(high),
-            mask: 1,
-        };
-        ioctl_line_values(
-            self.line.as_raw_fd(),
-            GPIO_V2_LINE_SET_VALUES_IOCTL,
-            &mut values,
-        )
-    }
-
-    fn request_line(
-        chip_path: impl AsRef<Path>,
-        line_offset: u32,
-        flags: u64,
-        initial_high: Option<bool>,
-    ) -> io::Result<Self> {
+    fn request_line(chip_path: impl AsRef<Path>, line_offset: u32, flags: u64) -> io::Result<Self> {
         let chip = OpenOptions::new().read(true).write(true).open(chip_path)?;
         let mut request: GpioV2LineRequest = unsafe { mem::zeroed() };
 
@@ -164,13 +120,6 @@ impl GpioController {
         request.num_lines = 1;
         request.config.flags = flags;
         copy_consumer_label(&mut request.consumer, b"cn0102");
-
-        if let Some(high) = initial_high {
-            request.config.num_attrs = 1;
-            request.config.attrs[0].attr.id = GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES;
-            request.config.attrs[0].attr.value.values = u64::from(high);
-            request.config.attrs[0].mask = 1;
-        }
 
         let result = unsafe {
             libc::ioctl(
