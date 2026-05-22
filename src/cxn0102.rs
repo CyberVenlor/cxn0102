@@ -9,7 +9,7 @@ const NOTIFY_READ_SIZE: usize = 32;
 pub struct CXN0102 {
     pub i2c_address: u16,
     pub i2c_path: &'static str,
-    pub gpio_chip_path: &'static str,
+    pub gpio_chip: &'static str,
     pub gpio_line_offset: u32,
 }
 
@@ -18,7 +18,7 @@ impl Default for CXN0102 {
         Self {
             i2c_address: 0x77,
             i2c_path: "/dev/i2c-7",
-            gpio_chip_path: "/dev/gpiochip0",
+            gpio_chip: "gpiochip0",
             gpio_line_offset: 144,
         }
     }

@@ -50,32 +50,15 @@ fn run_stdin_loop(cxn0102: CXN0102) -> io::Result<()> {
 }
 
 fn run_notification_loop(cxn0102: CXN0102) -> io::Result<()> {
-    let mut gpio =
-        GpioController::open_rising_edge(cxn0102.gpio_chip_path, cxn0102.gpio_line_offset)?;
-
-    println!(
-        "GPIO notification input: {} line {} with rising-edge interrupt and default input bias",
-        cxn0102.gpio_chip_path, cxn0102.gpio_line_offset
-    );
-
-    println!("GPIO initial level: {}", level_name(gpio.read()?));
+    let mut gpio = GpioController::open_rising_edge(cxn0102.gpio_chip, cxn0102.gpio_line_offset)?;
 
     loop {
         gpio.wait_rising_edge()?;
-        println!("GPIO edge: low -> high");
 
         match cxn0102.read_notify() {
             Ok(notify) => println!("notify: {notify:?}"),
             Err(error) => eprintln!("notify read error: {error}"),
         }
-    }
-}
-
-fn level_name(high: bool) -> &'static str {
-    if high {
-        "high"
-    } else {
-        "low"
     }
 }
 
