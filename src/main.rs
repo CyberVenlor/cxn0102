@@ -6,13 +6,10 @@ pub mod i2c;
 
 use std::io::{self, BufRead};
 use std::thread;
-use std::time::Duration;
 
 use cli::parse_request_line;
 use cxn0102::CXN0102;
 use gpio::GpioController;
-
-const GPIO_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() -> io::Result<()> {
     let cxn0102 = CXN0102::default();
@@ -53,33 +50,33 @@ fn run_stdin_loop(cxn0102: CXN0102) -> io::Result<()> {
 }
 
 fn run_notification_loop(cxn0102: CXN0102) -> io::Result<()> {
-    let gpio =
-        GpioController::open_input_pull_down(cxn0102.gpio_chip_path, cxn0102.gpio_line_offset)?;
+    let mut gpio =
+        GpioController::open_rising_edge(cxn0102.gpio_chip_path, cxn0102.gpio_line_offset)?;
 
     println!(
-        "GPIO notification input: {} line {} with input pull-down",
+        "GPIO notification input: {} line {} with rising-edge interrupt and default input bias",
         cxn0102.gpio_chip_path, cxn0102.gpio_line_offset
     );
 
-    let mut was_high = gpio.read()?;
-    println!("GPIO initial level: {}", level_name(was_high));
+    println!("GPIO initial level: {}", level_name(gpio.read()?));
 
     loop {
-        thread::sleep(GPIO_POLL_INTERVAL);
+        gpio.wait_rising_edge()?;
+        println!("GPIO edge: low -> high");
 
-        let is_high = gpio.read()?;
-        if !was_high && is_high {
-            match cxn0102.read_notify() {
-                Ok(notify) => println!("notify: {notify:?}"),
-                Err(error) => eprintln!("notify read error: {error}"),
-            }
+        match cxn0102.read_notify() {
+            Ok(notify) => println!("notify: {notify:?}"),
+            Err(error) => eprintln!("notify read error: {error}"),
         }
-        was_high = is_high;
     }
 }
 
 fn level_name(high: bool) -> &'static str {
-    if high { "high" } else { "low" }
+    if high {
+        "high"
+    } else {
+        "low"
+    }
 }
 
 fn format_hex(bytes: &[u8]) -> String {

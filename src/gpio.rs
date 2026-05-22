@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::path::Path;
@@ -9,7 +9,8 @@ const GPIO_V2_LINES_MAX: usize = 64;
 const GPIO_V2_LINE_NUM_ATTRS_MAX: usize = 10;
 
 const GPIO_V2_LINE_FLAG_INPUT: u64 = 1 << 2;
-const GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN: u64 = 1 << 9;
+const GPIO_V2_LINE_FLAG_EDGE_RISING: u64 = 1 << 4;
+const GPIO_V2_LINE_EVENT_RISING_EDGE: u32 = 1;
 
 const IOC_NRBITS: u64 = 8;
 const IOC_TYPEBITS: u64 = 8;
@@ -89,16 +90,27 @@ struct GpioV2LineValues {
     mask: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GpioV2LineEvent {
+    timestamp_ns: u64,
+    id: u32,
+    offset: u32,
+    seqno: u32,
+    line_seqno: u32,
+    padding: [u32; 6],
+}
+
 pub struct GpioController {
     line: File,
 }
 
 impl GpioController {
-    pub fn open_input_pull_down(chip_path: impl AsRef<Path>, line_offset: u32) -> io::Result<Self> {
+    pub fn open_rising_edge(chip_path: impl AsRef<Path>, line_offset: u32) -> io::Result<Self> {
         Self::request_line(
             chip_path,
             line_offset,
-            GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_BIAS_PULL_DOWN,
+            GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_EDGE_RISING,
         )
     }
 
@@ -112,6 +124,15 @@ impl GpioController {
         Ok((values.bits & 1) != 0)
     }
 
+    pub fn wait_rising_edge(&mut self) -> io::Result<()> {
+        loop {
+            let event = read_line_event(&mut self.line)?;
+            if event.id == GPIO_V2_LINE_EVENT_RISING_EDGE {
+                return Ok(());
+            }
+        }
+    }
+
     fn request_line(chip_path: impl AsRef<Path>, line_offset: u32, flags: u64) -> io::Result<Self> {
         let chip = OpenOptions::new().read(true).write(true).open(chip_path)?;
         let mut request: GpioV2LineRequest = unsafe { mem::zeroed() };
@@ -119,7 +140,7 @@ impl GpioController {
         request.offsets[0] = line_offset;
         request.num_lines = 1;
         request.config.flags = flags;
-        copy_consumer_label(&mut request.consumer, b"cn0102");
+        copy_consumer_label(&mut request.consumer, b"cxn0102");
 
         let result = unsafe {
             libc::ioctl(
@@ -149,6 +170,18 @@ fn ioctl_line_values(
     } else {
         Ok(())
     }
+}
+
+fn read_line_event(line: &mut File) -> io::Result<GpioV2LineEvent> {
+    let mut event: GpioV2LineEvent = unsafe { mem::zeroed() };
+    let buffer = unsafe {
+        std::slice::from_raw_parts_mut(
+            &mut event as *mut GpioV2LineEvent as *mut u8,
+            mem::size_of::<GpioV2LineEvent>(),
+        )
+    };
+    line.read_exact(buffer)?;
+    Ok(event)
 }
 
 fn copy_consumer_label(target: &mut [u8; GPIO_MAX_NAME_SIZE], source: &[u8]) {
