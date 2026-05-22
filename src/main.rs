@@ -1,9 +1,11 @@
+pub mod backend;
 pub mod cli;
 pub mod commands;
 pub mod cxn0102;
 pub mod gpio;
 pub mod i2c;
 
+use std::env;
 use std::io::{self, BufRead};
 use std::thread;
 
@@ -13,6 +15,16 @@ use gpio::GpioController;
 
 fn main() -> io::Result<()> {
     let cxn0102 = CXN0102::default();
+
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "backend" || arg == "serve")
+    {
+        let listen_addr = args.get(1).map(String::as_str).unwrap_or("127.0.0.1:8080");
+        return backend::run(cxn0102, listen_addr);
+    }
+
     let notify_cxn0102 = cxn0102;
 
     let notify_thread = thread::spawn(move || {
