@@ -7,23 +7,41 @@ use std::thread;
 use crate::cli::parse_request_line;
 use crate::commands::CXN0102Notify;
 use crate::cxn0102::CXN0102;
+use crate::gpio::GpioController;
 
 const MAX_BODY_SIZE: usize = 1024 * 1024;
-const MAX_FILTERED_NOTIFY_READS: usize = 8;
 const INDEX_HTML: &str = include_str!("../static/index.html");
 
-type SharedDevice = Arc<Mutex<CXN0102>>;
+type SharedBackend = Arc<Mutex<BackendState>>;
+
+struct BackendState {
+    cxn0102: CXN0102,
+    gpio: GpioController,
+}
+
+impl BackendState {
+    fn new(cxn0102: CXN0102) -> io::Result<Self> {
+        let gpio = GpioController::open_rising_edge(cxn0102.gpio_chip, cxn0102.gpio_line_offset)?;
+        Ok(Self { cxn0102, gpio })
+    }
+
+    fn transact(&mut self, bytes: &[u8]) -> io::Result<CXN0102Notify> {
+        self.cxn0102.write(bytes)?;
+        self.gpio.wait_rising_edge()?;
+        self.cxn0102.read_notify()
+    }
+}
 
 pub fn run(cxn0102: CXN0102, listen_addr: &str) -> io::Result<()> {
     let listener = TcpListener::bind(listen_addr)?;
-    let cxn0102 = Arc::new(Mutex::new(cxn0102));
+    let backend = Arc::new(Mutex::new(BackendState::new(cxn0102)?));
     println!("backend listening on http://{listen_addr}");
 
     for stream in listener.incoming() {
         let stream = stream?;
-        let cxn0102 = Arc::clone(&cxn0102);
+        let backend = Arc::clone(&backend);
         thread::spawn(move || {
-            if let Err(error) = handle_connection(stream, cxn0102) {
+            if let Err(error) = handle_connection(stream, backend) {
                 eprintln!("backend connection error: {error}");
             }
         });
@@ -32,7 +50,7 @@ pub fn run(cxn0102: CXN0102, listen_addr: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream, cxn0102: SharedDevice) -> io::Result<()> {
+fn handle_connection(mut stream: TcpStream, backend: SharedBackend) -> io::Result<()> {
     let request = match HttpRequest::read(&mut stream) {
         Ok(request) => request,
         Err(error) if error.kind() == io::ErrorKind::InvalidData => {
@@ -41,7 +59,7 @@ fn handle_connection(mut stream: TcpStream, cxn0102: SharedDevice) -> io::Result
         Err(error) => return Err(error),
     };
 
-    let response = route_request(request, cxn0102);
+    let response = route_request(request, backend);
     write_response_with_type(
         &mut stream,
         response.status,
@@ -50,13 +68,13 @@ fn handle_connection(mut stream: TcpStream, cxn0102: SharedDevice) -> io::Result
     )
 }
 
-fn route_request(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse {
+fn route_request(request: HttpRequest, backend: SharedBackend) -> HttpResponse {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => HttpResponse::html(200, INDEX_HTML.to_owned()),
         ("GET", "/health") => HttpResponse::json(200, r#"{"status":"ok"}"#.to_owned()),
-        ("GET", "/api/temperature") => read_temperature(cxn0102),
-        ("GET", "/api/version") => read_version(cxn0102),
-        ("POST", "/command") | ("POST", "/api/command") => process_command(request, cxn0102),
+        ("GET", "/api/temperature") => read_temperature(backend),
+        ("GET", "/api/version") => read_version(backend),
+        ("POST", "/command") | ("POST", "/api/command") => process_command(request, backend),
         ("GET", "/command") | ("GET", "/api/command") => {
             HttpResponse::json(405, json_error("use POST for command requests"))
         }
@@ -64,7 +82,7 @@ fn route_request(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse {
     }
 }
 
-fn process_command(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse {
+fn process_command(request: HttpRequest, backend: SharedBackend) -> HttpResponse {
     let body = String::from_utf8(request.body)
         .map_err(|error| format!("request body must be UTF-8: {error}"))
         .and_then(|body| command_line_from_body(&body));
@@ -82,19 +100,12 @@ fn process_command(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse 
         Err(error) => return HttpResponse::json(400, json_error(&error)),
     };
 
-    let cxn0102 = match cxn0102.lock() {
-        Ok(cxn0102) => cxn0102,
-        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+    let mut backend = match backend.lock() {
+        Ok(backend) => backend,
+        Err(_) => return HttpResponse::json(500, json_error("backend lock is poisoned")),
     };
 
-    if let Err(error) = cxn0102.write(&bytes) {
-        return HttpResponse::json(500, json_error(&error.to_string()));
-    }
-
-    let expected_command_id = bytes[0];
-    let reply = match read_matching_notify(&cxn0102, |notify| {
-        notify_command_id(notify) == expected_command_id
-    }) {
+    let reply = match backend.transact(&bytes) {
         Ok(notify) => notify,
         Err(error) => return HttpResponse::json(500, json_error(&error.to_string())),
     };
@@ -110,19 +121,13 @@ fn process_command(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse 
     )
 }
 
-fn read_temperature(cxn0102: SharedDevice) -> HttpResponse {
-    let cxn0102 = match cxn0102.lock() {
-        Ok(cxn0102) => cxn0102,
-        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+fn read_temperature(backend: SharedBackend) -> HttpResponse {
+    let mut backend = match backend.lock() {
+        Ok(backend) => backend,
+        Err(_) => return HttpResponse::json(500, json_error("backend lock is poisoned")),
     };
 
-    if let Err(error) = cxn0102.write(&[0xA0, 0x00]) {
-        return HttpResponse::json(500, json_error(&error.to_string()));
-    }
-
-    match read_matching_notify(&cxn0102, |notify| {
-        matches!(notify, CXN0102Notify::GetTemperature(_))
-    }) {
+    match backend.transact(&[0xA0, 0x00]) {
         Ok(CXN0102Notify::GetTemperature(notify)) => HttpResponse::json(
             200,
             format!(
@@ -138,19 +143,13 @@ fn read_temperature(cxn0102: SharedDevice) -> HttpResponse {
     }
 }
 
-fn read_version(cxn0102: SharedDevice) -> HttpResponse {
-    let cxn0102 = match cxn0102.lock() {
-        Ok(cxn0102) => cxn0102,
-        Err(_) => return HttpResponse::json(500, json_error("device lock is poisoned")),
+fn read_version(backend: SharedBackend) -> HttpResponse {
+    let mut backend = match backend.lock() {
+        Ok(backend) => backend,
+        Err(_) => return HttpResponse::json(500, json_error("backend lock is poisoned")),
     };
 
-    if let Err(error) = cxn0102.write(&[0xA2, 0x00]) {
-        return HttpResponse::json(500, json_error(&error.to_string()));
-    }
-
-    match read_matching_notify(&cxn0102, |notify| {
-        matches!(notify, CXN0102Notify::GetVersion(_))
-    }) {
+    match backend.transact(&[0xA2, 0x00]) {
         Ok(CXN0102Notify::GetVersion(notify)) => HttpResponse::json(
             200,
             format!(
@@ -166,75 +165,6 @@ fn read_version(cxn0102: SharedDevice) -> HttpResponse {
         ),
         Ok(notify) => HttpResponse::json(500, json_error(&format!("unexpected notify {notify:?}"))),
         Err(error) => HttpResponse::json(500, json_error(&error.to_string())),
-    }
-}
-
-fn read_matching_notify(
-    cxn0102: &CXN0102,
-    matches: impl Fn(&CXN0102Notify) -> bool,
-) -> io::Result<CXN0102Notify> {
-    for _ in 0..MAX_FILTERED_NOTIFY_READS {
-        let notify = cxn0102.read_notify()?;
-        if matches(&notify) {
-            return Ok(notify);
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::TimedOut,
-        "expected notify was not received",
-    ))
-}
-
-fn notify_command_id(notify: &CXN0102Notify) -> u8 {
-    match notify {
-        CXN0102Notify::BootCompleted(_) => 0x00,
-        CXN0102Notify::StartInput(_) => 0x01,
-        CXN0102Notify::StopInput(_) => 0x02,
-        CXN0102Notify::MuteUnmuteChangeOutput(_) => 0x03,
-        CXN0102Notify::SaveUserParam(_) => 0x07,
-        CXN0102Notify::InitializeUserParam(_) => 0x08,
-        CXN0102Notify::ShutdownReboot(_) => 0x0B,
-        CXN0102Notify::StopInputSpecially(_) => 0x0C,
-        CXN0102Notify::Emergency(_) => 0x10,
-        CXN0102Notify::TemperatureEmergencyAndRecovery(_) => 0x11,
-        CXN0102Notify::CommandEmergency(_) => 0x12,
-        CXN0102Notify::GetVideoOutputPosition(_) => 0x25,
-        CXN0102Notify::SetVideoOutputPosition(_) => 0x26,
-        CXN0102Notify::GetOpticalAlignment(_) => 0x27,
-        CXN0102Notify::SetOpticalAlignment(_) => 0x28,
-        CXN0102Notify::GetBiphase(_) => 0x29,
-        CXN0102Notify::SetBiphase(_) => 0x2A,
-        CXN0102Notify::EasyOpticalAdjustmentControl(_) => 0x32,
-        CXN0102Notify::EasyOpticalAdjustmentPlus(_) => 0x33,
-        CXN0102Notify::EasyOpticalAdjustmentMinus(_) => 0x34,
-        CXN0102Notify::EasyOpticalAdjustmentExit(_) => 0x35,
-        CXN0102Notify::EasyBiphaseAdjustmentControl(_) => 0x36,
-        CXN0102Notify::EasyBiphaseAdjustmentPlus(_) => 0x37,
-        CXN0102Notify::EasyBiphaseAdjustmentMinus(_) => 0x38,
-        CXN0102Notify::EasyBiphaseAdjustmentExit(_) => 0x39,
-        CXN0102Notify::GetAllPictureQuality(_) => 0x40,
-        CXN0102Notify::SetAllPictureQuality(_) => 0x41,
-        CXN0102Notify::GetBrightness(_) => 0x42,
-        CXN0102Notify::SetBrightness(_) => 0x43,
-        CXN0102Notify::GetContrast(_) => 0x44,
-        CXN0102Notify::SetContrast(_) => 0x45,
-        CXN0102Notify::GetHue(_) => 0x46,
-        CXN0102Notify::SetHue(_) => 0x47,
-        CXN0102Notify::GetSaturation(_) => 0x48,
-        CXN0102Notify::SetSaturation(_) => 0x49,
-        CXN0102Notify::GetSharpness(_) => 0x4E,
-        CXN0102Notify::SetSharpness(_) => 0x4F,
-        CXN0102Notify::UpdateFwImage(_) => 0x82,
-        CXN0102Notify::UpdatePictureData(_) => 0x84,
-        CXN0102Notify::DivisionTransmissionUpdateFwImage(_) => 0x92,
-        CXN0102Notify::DivisionTransmissionUpdatePictureData(_) => 0x94,
-        CXN0102Notify::GetTemperature(_) => 0xA0,
-        CXN0102Notify::GetTime(_) => 0xA1,
-        CXN0102Notify::GetVersion(_) => 0xA2,
-        CXN0102Notify::OutputTestPicture(_) => 0xA3,
-        CXN0102Notify::GetLotNumber(_) => 0xB2,
-        CXN0102Notify::GetSerialNumber(_) => 0xB4,
     }
 }
 
