@@ -447,9 +447,9 @@
     refreshHealth();
     refreshVersion();
     refreshTemperature();
-    setInterval(refreshTemperature, 2000);
+    setInterval(refreshTemperature, 5000);
     setInterval(refreshHealth, 5000);
-    setInterval(refreshVersion, 60000);
+    setInterval(refreshVersion, 5000);
 
     function currentCommand() {
       return commands.find((command) => command.name === commandSelect.value);
@@ -520,8 +520,6 @@
         appendLog(data, response.ok);
         sendStatus.textContent = response.ok ? "Sent" : "Failed";
         sendStatus.className = response.ok ? "status ok" : "status error";
-        refreshTemperature();
-        refreshVersion();
       } catch (error) {
         appendLog({ ok: false, error: error.message }, false);
         sendStatus.textContent = "Failed";

@@ -9,6 +9,7 @@ use crate::commands::CXN0102Notify;
 use crate::cxn0102::CXN0102;
 
 const MAX_BODY_SIZE: usize = 1024 * 1024;
+const MAX_FILTERED_NOTIFY_READS: usize = 8;
 const INDEX_HTML: &str = include_str!("../static/index.html");
 
 type SharedDevice = Arc<Mutex<CXN0102>>;
@@ -110,7 +111,9 @@ fn read_temperature(cxn0102: SharedDevice) -> HttpResponse {
         return HttpResponse::json(500, json_error(&error.to_string()));
     }
 
-    match cxn0102.read_notify() {
+    match read_matching_notify(&cxn0102, |notify| {
+        matches!(notify, CXN0102Notify::GetTemperature(_))
+    }) {
         Ok(CXN0102Notify::GetTemperature(notify)) => HttpResponse::json(
             200,
             format!(
@@ -121,10 +124,7 @@ fn read_temperature(cxn0102: SharedDevice) -> HttpResponse {
                 notify.system_stop_threshold_temperature
             ),
         ),
-        Ok(notify) => HttpResponse::json(
-            500,
-            json_error(&format!("expected temperature notify, received {notify:?}")),
-        ),
+        Ok(notify) => HttpResponse::json(500, json_error(&format!("unexpected notify {notify:?}"))),
         Err(error) => HttpResponse::json(500, json_error(&error.to_string())),
     }
 }
@@ -139,7 +139,9 @@ fn read_version(cxn0102: SharedDevice) -> HttpResponse {
         return HttpResponse::json(500, json_error(&error.to_string()));
     }
 
-    match cxn0102.read_notify() {
+    match read_matching_notify(&cxn0102, |notify| {
+        matches!(notify, CXN0102Notify::GetVersion(_))
+    }) {
         Ok(CXN0102Notify::GetVersion(notify)) => HttpResponse::json(
             200,
             format!(
@@ -153,12 +155,26 @@ fn read_version(cxn0102: SharedDevice) -> HttpResponse {
                 format_byte_array(notify.data)
             ),
         ),
-        Ok(notify) => HttpResponse::json(
-            500,
-            json_error(&format!("expected version notify, received {notify:?}")),
-        ),
+        Ok(notify) => HttpResponse::json(500, json_error(&format!("unexpected notify {notify:?}"))),
         Err(error) => HttpResponse::json(500, json_error(&error.to_string())),
     }
+}
+
+fn read_matching_notify(
+    cxn0102: &CXN0102,
+    matches: impl Fn(&CXN0102Notify) -> bool,
+) -> io::Result<CXN0102Notify> {
+    for _ in 0..MAX_FILTERED_NOTIFY_READS {
+        let notify = cxn0102.read_notify()?;
+        if matches(&notify) {
+            return Ok(notify);
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "expected notify was not received",
+    ))
 }
 
 fn command_line_from_body(body: &str) -> Result<String, String> {
