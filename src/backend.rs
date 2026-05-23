@@ -91,12 +91,21 @@ fn process_command(request: HttpRequest, cxn0102: SharedDevice) -> HttpResponse 
         return HttpResponse::json(500, json_error(&error.to_string()));
     }
 
+    let expected_command_id = bytes[0];
+    let reply = match read_matching_notify(&cxn0102, |notify| {
+        notify_command_id(notify) == expected_command_id
+    }) {
+        Ok(notify) => notify,
+        Err(error) => return HttpResponse::json(500, json_error(&error.to_string())),
+    };
+
     HttpResponse::json(
         200,
         format!(
-            r#"{{"ok":true,"command":"{}","bytes":"{}"}}"#,
+            r#"{{"ok":true,"command":"{}","request_bytes":"{}","reply":{}}}"#,
             json_escape(&line),
-            format_hex(&bytes)
+            format_hex(&bytes),
+            notify_json(&reply)
         ),
     )
 }
@@ -175,6 +184,416 @@ fn read_matching_notify(
         io::ErrorKind::TimedOut,
         "expected notify was not received",
     ))
+}
+
+fn notify_command_id(notify: &CXN0102Notify) -> u8 {
+    match notify {
+        CXN0102Notify::BootCompleted(_) => 0x00,
+        CXN0102Notify::StartInput(_) => 0x01,
+        CXN0102Notify::StopInput(_) => 0x02,
+        CXN0102Notify::MuteUnmuteChangeOutput(_) => 0x03,
+        CXN0102Notify::SaveUserParam(_) => 0x07,
+        CXN0102Notify::InitializeUserParam(_) => 0x08,
+        CXN0102Notify::ShutdownReboot(_) => 0x0B,
+        CXN0102Notify::StopInputSpecially(_) => 0x0C,
+        CXN0102Notify::Emergency(_) => 0x10,
+        CXN0102Notify::TemperatureEmergencyAndRecovery(_) => 0x11,
+        CXN0102Notify::CommandEmergency(_) => 0x12,
+        CXN0102Notify::GetVideoOutputPosition(_) => 0x25,
+        CXN0102Notify::SetVideoOutputPosition(_) => 0x26,
+        CXN0102Notify::GetOpticalAlignment(_) => 0x27,
+        CXN0102Notify::SetOpticalAlignment(_) => 0x28,
+        CXN0102Notify::GetBiphase(_) => 0x29,
+        CXN0102Notify::SetBiphase(_) => 0x2A,
+        CXN0102Notify::EasyOpticalAdjustmentControl(_) => 0x32,
+        CXN0102Notify::EasyOpticalAdjustmentPlus(_) => 0x33,
+        CXN0102Notify::EasyOpticalAdjustmentMinus(_) => 0x34,
+        CXN0102Notify::EasyOpticalAdjustmentExit(_) => 0x35,
+        CXN0102Notify::EasyBiphaseAdjustmentControl(_) => 0x36,
+        CXN0102Notify::EasyBiphaseAdjustmentPlus(_) => 0x37,
+        CXN0102Notify::EasyBiphaseAdjustmentMinus(_) => 0x38,
+        CXN0102Notify::EasyBiphaseAdjustmentExit(_) => 0x39,
+        CXN0102Notify::GetAllPictureQuality(_) => 0x40,
+        CXN0102Notify::SetAllPictureQuality(_) => 0x41,
+        CXN0102Notify::GetBrightness(_) => 0x42,
+        CXN0102Notify::SetBrightness(_) => 0x43,
+        CXN0102Notify::GetContrast(_) => 0x44,
+        CXN0102Notify::SetContrast(_) => 0x45,
+        CXN0102Notify::GetHue(_) => 0x46,
+        CXN0102Notify::SetHue(_) => 0x47,
+        CXN0102Notify::GetSaturation(_) => 0x48,
+        CXN0102Notify::SetSaturation(_) => 0x49,
+        CXN0102Notify::GetSharpness(_) => 0x4E,
+        CXN0102Notify::SetSharpness(_) => 0x4F,
+        CXN0102Notify::UpdateFwImage(_) => 0x82,
+        CXN0102Notify::UpdatePictureData(_) => 0x84,
+        CXN0102Notify::DivisionTransmissionUpdateFwImage(_) => 0x92,
+        CXN0102Notify::DivisionTransmissionUpdatePictureData(_) => 0x94,
+        CXN0102Notify::GetTemperature(_) => 0xA0,
+        CXN0102Notify::GetTime(_) => 0xA1,
+        CXN0102Notify::GetVersion(_) => 0xA2,
+        CXN0102Notify::OutputTestPicture(_) => 0xA3,
+        CXN0102Notify::GetLotNumber(_) => 0xB2,
+        CXN0102Notify::GetSerialNumber(_) => 0xB4,
+    }
+}
+
+fn notify_json(notify: &CXN0102Notify) -> String {
+    match notify {
+        CXN0102Notify::BootCompleted(notify) => object_json(
+            "boot-completed",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::StartInput(notify) => command_result_json("start-input", notify.result),
+        CXN0102Notify::StopInput(notify) => command_result_json("stop-input", notify.result),
+        CXN0102Notify::StopInputSpecially(notify) => {
+            command_result_json("stop-input-specially", notify.result)
+        }
+        CXN0102Notify::MuteUnmuteChangeOutput(notify) => {
+            command_result_json("mute-unmute-change-output", notify.result)
+        }
+        CXN0102Notify::SaveUserParam(notify) => {
+            command_result_json("save-user-param", notify.result)
+        }
+        CXN0102Notify::InitializeUserParam(notify) => {
+            command_result_json("initialize-user-param", notify.result)
+        }
+        CXN0102Notify::ShutdownReboot(notify) => {
+            command_result_json("shutdown-reboot", notify.result)
+        }
+        CXN0102Notify::GetVideoOutputPosition(notify) => object_json(
+            "get-video-output-position",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("pan", notify.pan.0.to_string()),
+                field_json("tilt", notify.tilt.0.to_string()),
+                field_json("flip", result_json(notify.flip)),
+            ],
+        ),
+        CXN0102Notify::SetVideoOutputPosition(notify) => {
+            error_result_json("set-video-output-position", notify.result)
+        }
+        CXN0102Notify::GetOpticalAlignment(notify) => object_json(
+            "get-optical-alignment",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json(
+                    "alignment",
+                    format!(
+                        r#"{{"r0_horizontal":{},"r1_horizontal":{},"g0_horizontal":{},"g1_horizontal":{},"b_horizontal":{},"r0_vertical":{},"r1_vertical":{},"g0_vertical":{},"g1_vertical":{},"b_vertical":{}}}"#,
+                        notify.alignment.r0_horizontal.0,
+                        notify.alignment.r1_horizontal.0,
+                        notify.alignment.g0_horizontal.0,
+                        notify.alignment.g1_horizontal.0,
+                        notify.alignment.b_horizontal.0,
+                        notify.alignment.r0_vertical,
+                        notify.alignment.r1_vertical,
+                        notify.alignment.g0_vertical,
+                        notify.alignment.g1_vertical,
+                        notify.alignment.b_vertical
+                    ),
+                ),
+            ],
+        ),
+        CXN0102Notify::SetOpticalAlignment(notify) => {
+            error_result_json("set-optical-alignment", notify.result)
+        }
+        CXN0102Notify::GetBiphase(notify) => object_json(
+            "get-biphase",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("amount", notify.amount.to_string()),
+            ],
+        ),
+        CXN0102Notify::SetBiphase(notify) => error_result_json("set-biphase", notify.result),
+        CXN0102Notify::EasyOpticalAdjustmentControl(notify) => object_json(
+            "set-easy-optical-adjustment-control",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyOpticalAdjustmentPlus(notify) => object_json(
+            "set-easy-optical-adjustment-plus",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyOpticalAdjustmentMinus(notify) => object_json(
+            "set-easy-optical-adjustment-minus",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyOpticalAdjustmentExit(notify) => {
+            command_result_json("set-easy-optical-adjustment-exit", notify.result)
+        }
+        CXN0102Notify::EasyBiphaseAdjustmentControl(notify) => object_json(
+            "set-easy-biphase-adjustment-control",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyBiphaseAdjustmentPlus(notify) => object_json(
+            "set-easy-biphase-adjustment-plus",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyBiphaseAdjustmentMinus(notify) => object_json(
+            "set-easy-biphase-adjustment-minus",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::EasyBiphaseAdjustmentExit(notify) => {
+            command_result_json("set-easy-biphase-adjustment-exit", notify.result)
+        }
+        CXN0102Notify::GetAllPictureQuality(notify) => object_json(
+            "get-all-picture-quality",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json(
+                    "picture_quality",
+                    format!(
+                        r#"{{"contrast":{},"brightness":{},"hue_u":{},"hue_v":{},"saturation_u":{},"saturation_v":{},"sharpness":{}}}"#,
+                        notify.picture_quality.contrast,
+                        notify.picture_quality.brightness,
+                        notify.picture_quality.hue_u,
+                        notify.picture_quality.hue_v,
+                        notify.picture_quality.saturation_u,
+                        notify.picture_quality.saturation_v,
+                        notify.picture_quality.sharpness
+                    ),
+                ),
+            ],
+        ),
+        CXN0102Notify::SetAllPictureQuality(notify) => {
+            error_result_json("set-all-picture-quality", notify.result)
+        }
+        CXN0102Notify::GetBrightness(notify) => scalar_json(
+            "get-brightness",
+            result_json(notify.result),
+            "brightness",
+            notify.brightness.to_string(),
+        ),
+        CXN0102Notify::SetBrightness(notify) => error_result_json("set-brightness", notify.result),
+        CXN0102Notify::GetContrast(notify) => scalar_json(
+            "get-contrast",
+            result_json(notify.result),
+            "contrast",
+            notify.contrast.to_string(),
+        ),
+        CXN0102Notify::SetContrast(notify) => error_result_json("set-contrast", notify.result),
+        CXN0102Notify::GetHue(notify) => object_json(
+            "get-hue",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("hue_u", notify.hue_u.to_string()),
+                field_json("hue_v", notify.hue_v.to_string()),
+            ],
+        ),
+        CXN0102Notify::SetHue(notify) => error_result_json("set-hue", notify.result),
+        CXN0102Notify::GetSaturation(notify) => object_json(
+            "get-saturation",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("saturation_u", notify.saturation_u.to_string()),
+                field_json("saturation_v", notify.saturation_v.to_string()),
+            ],
+        ),
+        CXN0102Notify::SetSaturation(notify) => error_result_json("set-saturation", notify.result),
+        CXN0102Notify::GetSharpness(notify) => scalar_json(
+            "get-sharpness",
+            result_json(notify.result),
+            "sharpness",
+            notify.sharpness.to_string(),
+        ),
+        CXN0102Notify::SetSharpness(notify) => error_result_json("set-sharpness", notify.result),
+        CXN0102Notify::UpdateFwImage(notify) => {
+            update_result_json("update-fw-image", notify.result)
+        }
+        CXN0102Notify::UpdatePictureData(notify) => {
+            update_result_json("update-picture-data", notify.result)
+        }
+        CXN0102Notify::DivisionTransmissionUpdateFwImage(notify) => {
+            update_result_json("division-transmission-update-fw-image", notify.result)
+        }
+        CXN0102Notify::DivisionTransmissionUpdatePictureData(notify) => {
+            update_result_json("division-transmission-update-picture-data", notify.result)
+        }
+        CXN0102Notify::GetTemperature(notify) => object_json(
+            "get-temperature",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("module_temperature", notify.module_temperature.to_string()),
+                field_json(
+                    "mute_threshold_temperature",
+                    notify.mute_threshold_temperature.to_string(),
+                ),
+                field_json(
+                    "system_stop_threshold_temperature",
+                    notify.system_stop_threshold_temperature.to_string(),
+                ),
+            ],
+        ),
+        CXN0102Notify::GetTime(notify) => object_json(
+            "get-time",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("seconds", notify.seconds.to_string()),
+            ],
+        ),
+        CXN0102Notify::GetVersion(notify) => object_json(
+            "get-version",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("firmware", string_json(&format_version(notify.firmware))),
+                field_json("parameter", string_json(&format_version(notify.parameter))),
+                field_json("data", string_json(&format_version(notify.data))),
+                field_json("firmware_bytes", u8_array_json(&notify.firmware)),
+                field_json("parameter_bytes", u8_array_json(&notify.parameter)),
+                field_json("data_bytes", u8_array_json(&notify.data)),
+            ],
+        ),
+        CXN0102Notify::OutputTestPicture(notify) => {
+            error_result_json("output-test-picture", notify.result)
+        }
+        CXN0102Notify::GetLotNumber(notify) => object_json(
+            "get-lot-number",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("lot_numbers", u32_array_json(&notify.lot_numbers)),
+            ],
+        ),
+        CXN0102Notify::GetSerialNumber(notify) => object_json(
+            "get-serial-number",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("serial_numbers", u32_array_json(&notify.serial_numbers)),
+            ],
+        ),
+        CXN0102Notify::Emergency(notify) => object_json(
+            "emergency",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::TemperatureEmergencyAndRecovery(notify) => object_json(
+            "temperature-emergency-and-recovery",
+            vec![field_json("result", result_json(notify.result))],
+        ),
+        CXN0102Notify::CommandEmergency(notify) => object_json(
+            "command-emergency",
+            vec![
+                field_json("result", result_json(notify.result)),
+                field_json("reference", notify.reference.to_string()),
+            ],
+        ),
+    }
+}
+
+fn command_result_json(command: &str, result: impl std::fmt::Debug) -> String {
+    object_json(command, vec![field_json("result", result_json(result))])
+}
+
+fn error_result_json(command: &str, result: u8) -> String {
+    object_json(command, vec![field_json("result", result.to_string())])
+}
+
+fn update_result_json(command: &str, result: impl std::fmt::Debug) -> String {
+    object_json(command, vec![field_json("result", result_json(result))])
+}
+
+fn scalar_json(command: &str, result: String, field: &str, value: String) -> String {
+    object_json(
+        command,
+        vec![field_json("result", result), field_json(field, value)],
+    )
+}
+
+fn object_json(command: &str, mut fields: Vec<String>) -> String {
+    let mut all_fields = vec![
+        field_json(
+            "command_id",
+            notify_command_id_from_name(command).to_string(),
+        ),
+        field_json("type", string_json(command)),
+    ];
+    all_fields.append(&mut fields);
+    format!("{{{}}}", all_fields.join(","))
+}
+
+fn notify_command_id_from_name(command: &str) -> u8 {
+    match command {
+        "boot-completed" => 0x00,
+        "start-input" => 0x01,
+        "stop-input" => 0x02,
+        "mute-unmute-change-output" => 0x03,
+        "save-user-param" => 0x07,
+        "initialize-user-param" => 0x08,
+        "shutdown-reboot" => 0x0B,
+        "stop-input-specially" => 0x0C,
+        "emergency" => 0x10,
+        "temperature-emergency-and-recovery" => 0x11,
+        "command-emergency" => 0x12,
+        "get-video-output-position" => 0x25,
+        "set-video-output-position" => 0x26,
+        "get-optical-alignment" => 0x27,
+        "set-optical-alignment" => 0x28,
+        "get-biphase" => 0x29,
+        "set-biphase" => 0x2A,
+        "set-easy-optical-adjustment-control" => 0x32,
+        "set-easy-optical-adjustment-plus" => 0x33,
+        "set-easy-optical-adjustment-minus" => 0x34,
+        "set-easy-optical-adjustment-exit" => 0x35,
+        "set-easy-biphase-adjustment-control" => 0x36,
+        "set-easy-biphase-adjustment-plus" => 0x37,
+        "set-easy-biphase-adjustment-minus" => 0x38,
+        "set-easy-biphase-adjustment-exit" => 0x39,
+        "get-all-picture-quality" => 0x40,
+        "set-all-picture-quality" => 0x41,
+        "get-brightness" => 0x42,
+        "set-brightness" => 0x43,
+        "get-contrast" => 0x44,
+        "set-contrast" => 0x45,
+        "get-hue" => 0x46,
+        "set-hue" => 0x47,
+        "get-saturation" => 0x48,
+        "set-saturation" => 0x49,
+        "get-sharpness" => 0x4E,
+        "set-sharpness" => 0x4F,
+        "update-fw-image" => 0x82,
+        "update-picture-data" => 0x84,
+        "division-transmission-update-fw-image" => 0x92,
+        "division-transmission-update-picture-data" => 0x94,
+        "get-temperature" => 0xA0,
+        "get-time" => 0xA1,
+        "get-version" => 0xA2,
+        "output-test-picture" => 0xA3,
+        "get-lot-number" => 0xB2,
+        "get-serial-number" => 0xB4,
+        _ => 0,
+    }
+}
+
+fn field_json(name: &str, value: String) -> String {
+    format!(r#""{}":{}"#, json_escape(name), value)
+}
+
+fn result_json(result: impl std::fmt::Debug) -> String {
+    string_json(&format!("{result:?}"))
+}
+
+fn string_json(value: &str) -> String {
+    format!(r#""{}""#, json_escape(value))
+}
+
+fn u8_array_json<const N: usize>(bytes: &[u8; N]) -> String {
+    format!(
+        "[{}]",
+        bytes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn u32_array_json<const N: usize>(values: &[u32; N]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn command_line_from_body(body: &str) -> Result<String, String> {
